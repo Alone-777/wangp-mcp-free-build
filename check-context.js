@@ -7,7 +7,11 @@ const root=path.resolve(process.env.WAN_STAGE_DIR||path.join(__dirname,'build-co
 const docker=fs.readFileSync(path.join(root,'Dockerfile'),'utf8');
 const startup=fs.readFileSync(path.join(root,'image-mcp-entrypoint.sh'),'utf8');
 for(const file of ['wgp.py','requirements.txt','shared/mcp_server.py','models/__init__.py','LICENSE.txt'])assert.ok(fs.existsSync(path.join(root,file)),file);
-assert.match(docker,/FROM nvidia\/cuda:12\.8\.1-cudnn-devel-ubuntu22\.04/);
+assert.match(docker,/FROM nvidia\/cuda:12\.8\.1-cudnn-devel-ubuntu24\.04/);
+assert.match(docker,/python3 python3-venv python3-pip/);
+assert.match(docker,/RUN python3 -m venv \/opt\/wangp-venv/);
+assert.match(docker,/ENV PATH="\/opt\/wangp-venv\/bin:\$\{PATH\}"/);
+assert.match(docker,/RUN python3 -c "import sys; assert sys\.version_info >= \(3, 11\)/);
 assert.match(docker,/COPY --chown=user:user \. \/workspace\/WanGP\//);
 assert.match(docker,/ENTRYPOINT \["\/bin\/bash","\/workspace\/WanGP\/image-mcp-entrypoint\.sh"\]/);
 assert.match(startup,/--mcp-api-version 1/);

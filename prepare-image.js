@@ -19,6 +19,32 @@ if(commit!==expected)throw Error('WanGP commit differs from audited version');
 if(git('status','--porcelain'))throw Error('WanGP working tree not clean');
 const official=fs.readFileSync(path.join(source,'Dockerfile'),'utf8');
 if(!official.includes('nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04')||!official.includes('COPY requirements.txt'))throw Error('Upstream Dockerfile changed');
+// Ubuntu 22.04 provides Python 3.10, but scikit-image>=0.26.0 requires >=3.11.
+// Use Python 3.12 from Ubuntu 24.04 and a venv to avoid PEP 668 restrictions.
+function replaceExactlyOnce(input, oldText, newText, label) {
+  const parts=input.split(oldText);
+  if(parts.length!==2)throw Error('Unexpected upstream Dockerfile structure: '+label);
+  return parts.join(newText);
+}
+let compatible=replaceExactlyOnce(official,
+  'FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04',
+  'FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04',
+  'Ubuntu base');
+compatible=replaceExactlyOnce(compatible,
+  'python3 python3-pip git wget curl cmake ninja-build',
+  'python3 python3-venv python3-pip git wget curl cmake ninja-build',
+  'python3-venv installation');
+compatible=replaceExactlyOnce(compatible,
+  'WORKDIR /workspace',
+  [
+    'RUN python3 -c "import sys; assert sys.version_info >= (3, 11), sys.version"',
+    'RUN python3 -m venv /opt/wangp-venv',
+    'ENV PATH="/opt/wangp-venv/bin:${PATH}"',
+    'RUN python --version && pip --version',
+    '',
+    'WORKDIR /workspace'
+  ].join('\n'),
+  'venv setup');
 const paths=cp.execFileSync('git',['-C',source,'ls-files','-z'],{maxBuffer:20*1024*1024}).toString('utf8').split('\0').filter(Boolean);
 if(paths.length<200)throw Error('WanGP missing files');
 if(!stage.startsWith(path.resolve(__dirname)+path.sep) && !stage.startsWith(path.resolve(process.env.RUNNER_TEMP||'')+path.sep))throw Error('Refusing to write outside project or runner temp');
@@ -47,7 +73,7 @@ const extension=[
   'VOLUME ["/data"]',
   'ENTRYPOINT ["/bin/bash","/workspace/WanGP/image-mcp-entrypoint.sh"]'
 ].join('\n');
-fs.writeFileSync(path.join(stage,'Dockerfile'),'# syntax=docker/dockerfile:1.7\n'+official.trimEnd()+'\n\n'+extension+'\n','utf8');
+fs.writeFileSync(path.join(stage,'Dockerfile'),'# syntax=docker/dockerfile:1.7\n'+compatible.trimEnd()+'\n\n'+extension+'\n','utf8');
 fs.writeFileSync(path.join(stage,'.dockerignore'),'.git\n.env\n.env.*\n*.pem\n*.key\n*.p12\n*.pfx\n**/__pycache__\n**/*.pyc\noutputs\nckpts\ncache\nloras\nworkspaces\nnode_modules\n','utf8');
 const result={source_commit:commit,tracked_files:paths.length,built_image:false,gpu_tested:false,weights_included:false,context_path:stage};
 console.log(JSON.stringify(result));
