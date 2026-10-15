@@ -1,0 +1,18 @@
+'use strict';
+const fs=require('node:fs');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+const cp=require('node:child_process');
+const root=path.resolve(process.env.WAN_STAGE_DIR||path.join(__dirname,'build-context'));
+const docker=fs.readFileSync(path.join(root,'Dockerfile'),'utf8');
+const startup=fs.readFileSync(path.join(root,'image-mcp-entrypoint.sh'),'utf8');
+for(const file of ['wgp.py','requirements.txt','shared/mcp_server.py','models/__init__.py','LICENSE.txt'])assert.ok(fs.existsSync(path.join(root,file)),file);
+assert.match(docker,/FROM nvidia\/cuda:12\.8\.1-cudnn-devel-ubuntu22\.04/);
+assert.match(docker,/COPY --chown=user:user \. \/workspace\/WanGP\//);
+assert.match(docker,/ENTRYPOINT \["\/bin\/bash","\/workspace\/WanGP\/image-mcp-entrypoint\.sh"\]/);
+assert.match(startup,/--mcp-api-version 1/);
+assert.match(startup,/--mcp-host 127\.0\.0\.1/);
+assert.ok(!/\b(pip install|docker push|docker build|apt-get)\b/.test(startup));
+assert.ok(!/^EXPOSE\s+7866\b/m.test(docker));
+assert.ok(!fs.existsSync(path.join(root,'.git')));
+console.log('STATIC_PREFLIGHT_PASS - no image build or real inference yet');

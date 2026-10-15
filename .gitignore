@@ -1,0 +1,16 @@
+build-context/
+build-manifest.json
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.zip
+*.tar
+*.tar.gz
+*.safetensors
+*.gguf
+*.ckpt
+models-cache/
+node_modules/

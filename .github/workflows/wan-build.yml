@@ -1,0 +1,112 @@
+name: WanGP - free runner capacity and optional container build
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Run only the free runner preflight, or attempt a bounded Docker build"
+        type: choice
+        required: true
+        default: preflight
+        options:
+          - preflight
+          - build
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wangp-safe-image-build
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: Check build feasibility
+    # Private repos consume minutes and may incur charges. Refuse them outright.
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm public standard runner and clean baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PUBLIC_REPOSITORY=true"
+          echo "RUNNER=${RUNNER_NAME} OS=${RUNNER_OS} ARCH=${RUNNER_ARCH}"
+          df -h /
+          free -h
+          docker version --format '{{.Server.Version}}'
+          docker system df
+          echo "No GPU hired; no model weights; no image publication."
+
+      - name: Retrieve fixed upstream source (no user files)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/WanGP-preparacao"
+          cd "$RUNNER_TEMP/WanGP-preparacao"
+          git init -q
+          git remote add origin https://github.com/deepbeepmeep/Wan2GP.git
+          git fetch -q --depth 1 origin de302eec64b692dc83949d687cadf7d60bd74091
+          git checkout --detach -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "de302eec64b692dc83949d687cadf7d60bd74091"
+
+      - name: Assemble context and validate scripts, no Docker build yet
+        env:
+          WAN_SOURCE_DIR: ${{ runner.temp }}/WanGP-preparacao
+          WAN_STAGE_DIR: ${{ runner.temp }}/wangp-build-context
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check prepare-image.js
+          node --check check-context.js
+          node prepare-image.js
+          node check-context.js
+          bash -n image-mcp-entrypoint.sh
+          echo "Disk after context staging:"
+          df -h /
+          du -sh "$WAN_STAGE_DIR"
+
+      - name: Decide whether Docker build is safe on this runner
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          available=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+          echo "Available bytes before build: $available"
+          echo "Official standard runner specification: 14 GB SSD."
+          if [ "${{ inputs.stage }}" != "build" ]; then
+            echo "PRECHECK_DONE: no Docker build requested."
+            exit 0
+          fi
+          # Initial conservative cutoff for CUDA devel, torch and compiled SageAttention.
+          minimum=$((24 * 1024 * 1024 * 1024))
+          if [ "$available" -lt "$minimum" ]; then
+            echo "::error::DISK_UNSUITABLE: less than 24 GiB available. No image build attempted."
+            exit 1
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build locally only (no push; 35 minute timeout)
+        if: ${{ inputs.stage == 'build' && steps.gate.outputs.proceed == 'true' }}
+        working-directory: ${{ runner.temp }}/wangp-build-context
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Starting a bounded build. No publishing, caches or artifacts."
+          timeout --signal=TERM --kill-after=30s 35m docker build \
+            --progress=plain \
+            --build-arg CUDA_ARCHITECTURES=8.9 \
+            -t local-only/wangp-mcp:preflight .
+          docker image inspect local-only/wangp-mcp:preflight --format 'IMAGE_SIZE_BYTES={{.Size}}'
+
+      - name: Test imports in the built image (no NVIDIA GPU on runner)
+        if: ${{ inputs.stage == 'build' && steps.gate.outputs.proceed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/bash local-only/wangp-mcp:preflight \
+            -lc 'python3 -c "import torch, mcp; print(torch.__version__); print(torch.cuda.is_available())"'
+          echo "Important: GPU inference has NOT been validated."
