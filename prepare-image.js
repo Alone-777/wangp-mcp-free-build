@@ -86,6 +86,16 @@ for(const file of paths){
   fs.copyFileSync(src,dest);
 }
 fs.copyFileSync(startScript,path.join(stage,'image-mcp-entrypoint.sh'));
+// decord 0.6.0 advertises an unsupported Python 3.12 platform even though pip
+// installs it. Only the optional Windows DLL handling references decord in the
+// checked WanGP source; avoid breaking pip check on the Linux 3.12 T2V image.
+const requirementFile=path.join(stage,'requirements.txt');
+let requirements=fs.readFileSync(requirementFile,'utf8').replace(/\r\n/g,'\n');
+requirements=replaceExactlyOnce(requirements,
+  'decord; sys_platform != "darwin"',
+  '# decord omitted in Linux/Python 3.12 image; optional video decoder (platform unsupported)',
+  'optional decord requirement');
+fs.writeFileSync(requirementFile,requirements,'utf8');
 // Pin the entire PyTorch trio on the same CUDA 12.8 build for the full pip resolve.
 fs.writeFileSync(path.join(stage,'torch-constraints.txt'),
   'torch==2.10.0+cu128\n'
