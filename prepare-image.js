@@ -17,7 +17,7 @@ const commit=git('rev-parse','HEAD');
 const expected='de302eec64b692dc83949d687cadf7d60bd74091';
 if(commit!==expected)throw Error('WanGP commit differs from audited version');
 if(git('status','--porcelain'))throw Error('WanGP working tree not clean');
-const official=fs.readFileSync(path.join(source,'Dockerfile'),'utf8');
+const official=fs.readFileSync(path.join(source,'Dockerfile'),'utf8').replace(/\r\n/g,'\n');
 if(!official.includes('nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04')||!official.includes('COPY requirements.txt'))throw Error('Upstream Dockerfile changed');
 // Ubuntu 22.04 provides Python 3.10, but scikit-image>=0.26.0 requires >=3.11.
 // Use Python 3.12 from Ubuntu 24.04 and a venv to avoid PEP 668 restrictions.
@@ -45,6 +45,33 @@ compatible=replaceExactlyOnce(compatible,
     'WORKDIR /workspace'
   ].join('\n'),
   'venv setup');
+// Prevent pip from silently replacing CUDA 12.8 builds with CUDA 13 packages.
+// If any upstream dependency truly conflicts, make the build fail explicitly.
+compatible=replaceExactlyOnce(compatible,
+  'COPY requirements.txt .',
+  'COPY requirements.txt .\nCOPY torch-constraints.txt .',
+  'constraints file COPY');
+compatible=replaceExactlyOnce(compatible,
+  'RUN pip install -r requirements.txt',
+  [
+    'RUN pip install -r requirements.txt -c torch-constraints.txt && \\',
+    '    python -c "import torch; assert torch.__version__ == \'2.10.0+cu128\', torch.__version__; assert torch.version.cuda == \'12.8\', torch.version.cuda" && \\',
+    '    pip check'
+  ].join('\n'),
+  'requirements installation');
+// SageAttention compiles CUDA extensions; it is optional when using SDPA.
+// Exclude the whole upstream SageAttention compilation rather than copying a
+// potentially incompatible toolkit/compiler step into the paid GPU image.
+const sageStart='# Install SageAttention from git (patch GPU detection)';
+const sageEnd='RUN useradd -u 1000 -ms /bin/bash user';
+const sageBegin=compatible.indexOf(sageStart);
+const sageStop=compatible.indexOf(sageEnd, sageBegin);
+if(sageBegin<0 || sageStop<0 || compatible.indexOf(sageStart,sageBegin+1)!==-1) {
+  throw Error('Unexpected upstream SageAttention installation block');
+}
+compatible=compatible.slice(0,sageBegin)
+  + '# SageAttention omitted: WanGP MCP runs with --attention sdpa.\n\n'
+  + compatible.slice(sageStop);
 const paths=cp.execFileSync('git',['-C',source,'ls-files','-z'],{maxBuffer:20*1024*1024}).toString('utf8').split('\0').filter(Boolean);
 if(paths.length<200)throw Error('WanGP missing files');
 if(!stage.startsWith(path.resolve(__dirname)+path.sep) && !stage.startsWith(path.resolve(process.env.RUNNER_TEMP||'')+path.sep))throw Error('Refusing to write outside project or runner temp');
@@ -59,6 +86,11 @@ for(const file of paths){
   fs.copyFileSync(src,dest);
 }
 fs.copyFileSync(startScript,path.join(stage,'image-mcp-entrypoint.sh'));
+// Pin the entire PyTorch trio on the same CUDA 12.8 build for the full pip resolve.
+fs.writeFileSync(path.join(stage,'torch-constraints.txt'),
+  'torch==2.10.0+cu128\n'
+  +'torchvision==0.25.0+cu128\n'
+  +'torchaudio==2.10.0+cu128\n','utf8');
 const extension=[
   'LABEL org.opencontainers.image.source="https://github.com/deepbeepmeep/Wan2GP"',
   'LABEL org.opencontainers.image.revision="'+commit+'"',
