@@ -45,6 +45,16 @@ compatible=replaceExactlyOnce(compatible,
     'WORKDIR /workspace'
   ].join('\n'),
   'venv setup');
+// Keep downloaded Python wheels OUT of image layers. Deleting pip caches in a
+// later RUN would not shrink earlier Docker layers, so disable caching first.
+compatible=replaceExactlyOnce(compatible,
+  'ENV PATH="/opt/wangp-venv/bin:${PATH}"',
+  'ENV PATH="/opt/wangp-venv/bin:${PATH}"\nENV PIP_NO_CACHE_DIR=1',
+  'disable pip wheel/download caches');
+compatible=replaceExactlyOnce(compatible,
+  '    apt clean',
+  '    apt clean && rm -rf /var/lib/apt/lists/*',
+  'cleanup apt package indexes in same layer');
 // Prevent pip from silently replacing CUDA 12.8 builds with CUDA 13 packages.
 // If any upstream dependency truly conflicts, make the build fail explicitly.
 compatible=replaceExactlyOnce(compatible,

@@ -100,7 +100,15 @@ jobs:
             --progress=plain \
             --build-arg CUDA_ARCHITECTURES=8.9 \
             -t local-only/wangp-mcp:preflight .
-          docker image inspect local-only/wangp-mcp:preflight --format 'IMAGE_SIZE_BYTES={{.Size}}'
+          size=$(docker image inspect local-only/wangp-mcp:preflight --format '{{.Size}}')
+          baseline=24985334052
+          saved=$((baseline - size))
+          echo "IMAGE_SIZE_BYTES=$size"
+          echo "BASELINE_IMAGE_BYTES=$baseline"
+          echo "SAVED_BYTES=$saved"
+          echo "SAVED_PERCENT=$(awk -v saved="$saved" -v base="$baseline" 'BEGIN { printf "%.2f", (saved / base) * 100 }')"
+          echo "Largest image layers (summary):"
+          docker history local-only/wangp-mcp:preflight --format '{{.Size}} | {{.CreatedBy}}' | sed -n '1,22p'
 
       - name: Test imports in the built image (no NVIDIA GPU on runner)
         if: ${{ inputs.stage == 'build' && steps.gate.outputs.proceed == 'true' }}

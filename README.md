@@ -8,4 +8,8 @@ GitHub Actions supports manual workflow dispatch:
 
 The workflow refuses private repositories to avoid possible charges for minutes; it does not push images, upload artifacts, download model weights, or request paid GPUs.
 
-The real image remains **unbuilt and unverified** unless the CI logs demonstrate otherwise. No costs are promised or guaranteed beyond GitHub's documented free use of standard runners on public repositories.
+The full image build and Python import test succeeded in [GitHub Actions run #38829641473](https://github.com/Alone-777/wangp-mcp-free-build/actions/runs/38829641473) on commit `a373a1f`. This build created a **temporary local image only** (24,985,334,052 bytes / approximately 23.3 GiB); nothing was published or retained for future GPU use. GPU inference, WanGP startup and video generation remain untested.
+
+The following revision disables pip's downloaded-wheel cache *before* installing packages and cleans apt metadata in the same Docker layer. We measure the new image against that 24,985,334,052-byte baseline; the size is unknown until GitHub Actions completes another build. The intended benefit is a smaller image without removing application dependencies.
+
+No costs are promised or guaranteed beyond GitHub's documented free use of standard runners on public repositories. The workflow does not publish images or request a paid GPU.
