@@ -12,4 +12,8 @@ The full image build and Python import test succeeded in [GitHub Actions run #38
 
 The following revision disables pip's downloaded-wheel cache *before* installing packages and cleans apt metadata in the same Docker layer. We measure the new image against that 24,985,334,052-byte baseline; the size is unknown until GitHub Actions completes another build. The intended benefit is a smaller image without removing application dependencies.
 
-No costs are promised or guaranteed beyond GitHub's documented free use of standard runners on public repositories. The workflow does not publish images or request a paid GPU.
+No costs are promised or guaranteed beyond GitHub's documented free use of standard runners on public repositories. The free build/test workflow does not publish images or request a paid GPU. A separate, deliberately manual publishing workflow released the approved image `ghcr.io/alone-777/wangp-mcp:v0.1.0-build-validated` (digest `sha256:c9a9531403b210bec955655d983e019144662c991f212671e7e31b00447c0d95`).
+
+**October 15 Vast.ai test:** An RTX 3090 rental was destroyed and verified absent after the container image remained in `loading` for roughly 10 minutes. The host repeatedly retried pulling the 4,225,425,422-byte compressed PyTorch dependency layer (`sha256:c3d54388fe9e...`). No video or model download occurred. The original published v0.1.0 tag remains unchanged.
+
+The next build variation installs the same pinned PyTorch and CUDA components across multiple Docker layers, reducing the maximum individual transfer size without switching to different package versions. Its build and import results are unverified until another GitHub Actions run succeeds; it must receive a **new** image tag rather than overwriting the approved one.

@@ -55,6 +55,17 @@ compatible=replaceExactlyOnce(compatible,
   '    apt clean',
   '    apt clean && rm -rf /var/lib/apt/lists/*',
   'cleanup apt package indexes in same layer');
+// GitHub's successful image contained a single 4.23-GB compressed PyTorch
+// layer (digest c3d543...). Vast's Docker pull repeatedly retried it.
+// Split the identical pinned dependencies into smaller, cache-independent
+// layers without changing their versions, which helps hosts resume pulls.
+const torchInstall='RUN pip install torch==2.10.0+cu128 torchvision==0.25.0+cu128 torchaudio==2.10.0+cu128 --index-url https://download.pytorch.org/whl/cu128';
+compatible=replaceExactlyOnce(compatible,torchInstall,[
+  '# Split the large PyTorch image layer for reliable registry pulls.',
+  'RUN pip install --no-deps torch==2.10.0+cu128 torchvision==0.25.0+cu128 torchaudio==2.10.0+cu128 --index-url https://download.pytorch.org/whl/cu128',
+  'RUN pip install --no-deps nvidia-cublas-cu12==12.8.4.1 nvidia-cudnn-cu12==9.10.2.21 --index-url https://download.pytorch.org/whl/cu128',
+  torchInstall
+].join('\n'),'split PyTorch download layers');
 // Prevent pip from silently replacing CUDA 12.8 builds with CUDA 13 packages.
 // If any upstream dependency truly conflicts, make the build fail explicitly.
 compatible=replaceExactlyOnce(compatible,
