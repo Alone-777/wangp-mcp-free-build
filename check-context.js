@@ -26,6 +26,8 @@ assert.match(docker,/torch\.version\.cuda == '12\.8'/);
 assert.doesNotMatch(docker,/RUN git clone https:\/\/github\.com\/thu-ml\/SageAttention/);
 assert.doesNotMatch(docker,/COPY <<EOF \/tmp\/patch_setup\.py/);
 assert.match(startup,/--attention sdpa/);
+assert.match(docker,/RUN id -u user >\/dev\/null 2>&1 \|\| useradd -ms \/bin\/bash user/);
+assert.doesNotMatch(docker,/RUN useradd -u 1000/);
 assert.match(docker,/COPY --chown=user:user \. \/workspace\/WanGP\//);
 assert.match(docker,/ENTRYPOINT \["\/bin\/bash","\/workspace\/WanGP\/image-mcp-entrypoint\.sh"\]/);
 assert.match(startup,/--mcp-api-version 1/);

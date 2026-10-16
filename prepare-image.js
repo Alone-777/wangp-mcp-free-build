@@ -59,11 +59,17 @@ compatible=replaceExactlyOnce(compatible,
     '    pip check'
   ].join('\n'),
   'requirements installation');
+// Ubuntu 24.04 reserves UID 1000 (usually for the default 'ubuntu' user).
+// Let useradd choose the next free UID; never collide with the base image.
+compatible=replaceExactlyOnce(compatible,
+  'RUN useradd -u 1000 -ms /bin/bash user',
+  'RUN id -u user >/dev/null 2>&1 || useradd -ms /bin/bash user',
+  'dedicated non-root account');
 // SageAttention compiles CUDA extensions; it is optional when using SDPA.
 // Exclude the whole upstream SageAttention compilation rather than copying a
 // potentially incompatible toolkit/compiler step into the paid GPU image.
 const sageStart='# Install SageAttention from git (patch GPU detection)';
-const sageEnd='RUN useradd -u 1000 -ms /bin/bash user';
+const sageEnd='RUN id -u user >/dev/null 2>&1 || useradd -ms /bin/bash user';
 const sageBegin=compatible.indexOf(sageStart);
 const sageStop=compatible.indexOf(sageEnd, sageBegin);
 if(sageBegin<0 || sageStop<0 || compatible.indexOf(sageStart,sageBegin+1)!==-1) {
