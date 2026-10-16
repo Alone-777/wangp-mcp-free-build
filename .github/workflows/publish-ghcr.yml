@@ -1,0 +1,131 @@
+name: Publish approved WanGP image to GHCR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: wangp-ghcr-approved-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, test, and publish pinned image
+    if: ${{ github.event.repository.private == false && github.repository == 'Alone-777/wangp-mcp-free-build' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      IMAGE: ghcr.io/alone-777/wangp-mcp:v0.1.0-build-validated
+      APPROVED_COMMIT: 62171fb147e68b348fc776cb2f8e0320558b02ab
+    steps:
+      - name: Checkout exactly the previously validated source
+        uses: actions/checkout@v4
+        with:
+          ref: 62171fb147e68b348fc776cb2f8e0320558b02ab
+          persist-credentials: false
+
+      - name: Assert pinned build scripts and sufficient disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
+          echo "SOURCE_COMMIT=$APPROVED_COMMIT"
+          echo "IMAGE=$IMAGE"
+          df -h /
+          available=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+          minimum=$((24 * 1024 * 1024 * 1024))
+          if [ "$available" -lt "$minimum" ]; then
+            echo "::error::INSUFFICIENT_DISK: no build, no publication."
+            exit 1
+          fi
+          docker version --format '{{.Server.Version}}'
+
+      - name: Retrieve pinned official WanGP code
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/WanGP-preparacao"
+          cd "$RUNNER_TEMP/WanGP-preparacao"
+          git init -q
+          git remote add origin https://github.com/deepbeepmeep/Wan2GP.git
+          git fetch -q --depth 1 origin de302eec64b692dc83949d687cadf7d60bd74091
+          git checkout --detach -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "de302eec64b692dc83949d687cadf7d60bd74091"
+
+      - name: Generate and statically test Docker context
+        env:
+          WAN_SOURCE_DIR: ${{ runner.temp }}/WanGP-preparacao
+          WAN_STAGE_DIR: ${{ runner.temp }}/wangp-build-context
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check prepare-image.js
+          node --check check-context.js
+          node prepare-image.js
+          node check-context.js
+          bash -n image-mcp-entrypoint.sh
+
+      - name: Build approved dependencies, with source label for GHCR linkage
+        working-directory: ${{ runner.temp }}/wangp-build-context
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 35m docker build \
+            --progress=plain \
+            --build-arg CUDA_ARCHITECTURES=8.9 \
+            --label "org.opencontainers.image.source=https://github.com/Alone-777/wangp-mcp-free-build" \
+            -t "$IMAGE" .
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          echo "IMAGE_SIZE_BYTES=$size"
+          # Only the source label differs from the validated build; avoid unexpected growth.
+          max_size=23500000000
+          if [ "$size" -gt "$max_size" ]; then
+            echo "::error::IMAGE_EXCEEDED_VALIDATED_SIZE: no publication."
+            exit 1
+          fi
+
+      - name: Verify image before publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/bash "$IMAGE" -lc '
+            set -e
+            python3 -c "import torch, mcp; assert torch.__version__ == \"2.10.0+cu128\", torch.__version__; assert torch.version.cuda == \"12.8\", torch.version.cuda; print(\"IMPORTS_OK\")"
+            command -v ffmpeg
+            test -f /workspace/WanGP/wgp.py
+            test -f /workspace/WanGP/image-mcp-entrypoint.sh
+          '
+          echo "NOTE: No GPU inference, no model weights, no video generated."
+
+      - name: Authenticate with temporary GitHub Actions token
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish ONLY the approved version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 22m docker push "$IMAGE" | tee "$RUNNER_TEMP/ghcr-push.log"
+          grep -E 'digest: sha256:[a-f0-9]{64}' "$RUNNER_TEMP/ghcr-push.log"
+          echo "PUBLISHED_IMAGE=$IMAGE"
+          docker manifest inspect "$IMAGE" > /dev/null
+          echo "AUTHENTICATED_MANIFEST=OK"
+
+      - name: Check whether unauthenticated pull is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/anonymous-docker"
+          if docker --config "$RUNNER_TEMP/anonymous-docker" manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "ANONYMOUS_PULL=AVAILABLE"
+          else
+            echo "ANONYMOUS_PULL=UNAVAILABLE_OR_NOT_YET_PUBLIC"
+            echo "::warning::GHCR may default to private. Set package visibility Public if needed for anonymous Vast.ai pull."
+          fi
+          echo "No NVIDIA GPU rented; no model downloaded."
